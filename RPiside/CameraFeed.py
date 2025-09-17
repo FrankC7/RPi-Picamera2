@@ -1,21 +1,20 @@
 from flask import Flask, render_template, Response
 from picamera2 import Picamera2
+from libcamera import Transform
 import cv2
 
 
 app = Flask(__name__)
 
-camera = Picamera2()
-camera.configure(camera.create_preview_configuration(main={"format": 'XRGB8888', "size": (640, 480)}))
-camera.start()
-
-@app.route('/')
-def index():
-    return render_template('index.html')
+picam2 = Picamera2()
+config = picam2.create_preview_configuration(main={"format": 'XRGB8888', "size": (640, 480)})
+config["transform"] = Transform(hflip=True, vflip=True)
+picam2.configure(config)
+picam2.start()
 
 def generate_frames():
     while True:
-        frame = camera.capture_array()
+        frame = picam2.capture_array()
         ret, buffer = cv2.imencode('.jpg', frame)
         frame = buffer.tobytes()
         yield (b'--frame\r\n'
