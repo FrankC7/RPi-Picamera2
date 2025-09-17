@@ -11,17 +11,26 @@ class VideoStreamThread(QThread):
         super().__init__()
         self.url = url
         self._run_flag = True
-        self.manager = QNetworkAccessManager()
+        #self.manager = QNetworkAccessManager()
         self.reply: QNetworkReply = None
         self.buffer = b''
-        self.boundary = b'--frame\r\n'
+        self.boundary_string = b'--frame'
         #print(f"[{self.__class__.__name__}] Initialized for URL: {self.url.toString()}")
 
     def run(self):
-        #print(f"[{self.__class__.__name__}] run() method started.")
+        self.manager = QNetworkAccessManager()
+
         request = QNetworkRequest(self.url)
         self.reply = self.manager.get(request)
-        self.reply.readyRead.connect(self.read_data)
+        
+        if self.reply:
+            self.reply.errorOccurred.connect(self._handle_network_error)
+            self.reply.finished.connect(self._handle_finished)
+            self.reply.readyRead.connect(self.read_data)
+        else:
+            print(f"[{self.__class__.__name__}] WARNING: QNetworkAccessManager.get() returned None or enountered an error.")
+            self.stop()
+
 
         self.exec()
         #print(f"[{self.__class__.__name__}] Event loop finished.")
@@ -39,21 +48,29 @@ class VideoStreamThread(QThread):
         data = self.reply.readAll().data()
         self.buffer += data
 
+        frames_processed = 0
         while True:
-            start_index = self.buffer.find(self.boundary)
-            if start_index == -1:
+            start_boundary_marker_index = self.buffer.find(self.boundary_string)
+            if start_boundary_marker_index == -1:
                 break
 
-            header_end_index = self.buffer.find(b'\r\n\r\n', start_index + len(self.boundary))
+            content_type_index = self.buffer.find(b'Content-Type: image/jpeg\r\n', start_boundary_marker_index)
+            if content_type_index == -1:
+                print(f"[{self.__class__.__name__}] WARNING: Content-Type header not found after boundary. Skipping partial frame.")
+                self.buffer = self.buffer[start_boundary_marker_index + len(self.boundary_string):]
+                continue
+
+            header_end_index = self.buffer.find(b'\r\n\r\n', content_type_index)
             if header_end_index == -1:
                 break
 
-            frame_end_index = self.buffer.find(self.boundary, header_end_index + 4)
-            if frame_end_index == -1:
+            jpeg_data_start = header_end_index + 4
+
+            next_boundary_marker_index = self.buffer.find(self.boundary_string, jpeg_data_start)
+            if next_boundary_marker_index == -1:
                 break
 
-            jpeg_data_start = header_end_index + 4
-            jpeg_data = self.buffer[jpeg_data_start : frame_end_index - 2]
+            jpeg_data = self.buffer[jpeg_data_start : next_boundary_marker_index - 2]
 
             '''
             print(f"[{self.__class__.__name__}] --- Frame Extracted ---")
@@ -77,7 +94,7 @@ class VideoStreamThread(QThread):
             except Exception as e:
                 print(f"Error processing frame: {e}")
 
-            self.buffer = self.buffer[frame_end_index:]
+            self.buffer = self.buffer[next_boundary_marker_index:]
             #print(f"[{self.__class__.__name__}] Buffer after processing frame. Length: {len(self.buffer)}")
             
 
